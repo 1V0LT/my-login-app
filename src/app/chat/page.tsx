@@ -123,7 +123,7 @@ export default function ChatPage() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 text-black p-6">
       <div className="w-full max-w-3xl bg-white p-6 rounded shadow flex flex-col h-[80vh]">
         <h1 className="text-2xl font-bold mb-4 text-blue-600 text-center">
-          Chat with AI Interviewer
+          Chat with the AI Interviewer
         </h1>
 
         {/* Chat messages */}

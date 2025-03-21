@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
     // Format conversation properly
     const formattedHistory = chatHistory.map(entry => ({
-      role: entry.role, // "system", "user", or "assistant"
+      role: entry.role, //  "system", "user", or "assistant"
       content: entry.content,
     }));
 
