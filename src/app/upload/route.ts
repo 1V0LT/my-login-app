@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pdfParse from "pdf-parse";
-import { JOBS_DATA } from "@/data/job";
+import { JOBS_DATA } from "@/data/jobs";
 
 export async function POST(req: NextRequest) {
   try {

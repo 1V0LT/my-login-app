@@ -4,99 +4,24 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { JOBS_DATA } from "../../data/jobs"; // ✅ correct relative path
 
-// Updated job data with 6 jobs
-const JOBS_DATA = [
-  {
-    id: 1,
-    title: "Marketing & Media Coordinator",
-    company: "United Global Services Company",
-    location: "Dubai, AE",
-    datePosted: "2025-03-01",
-    category: "Marketing",
-    featured: true,
-    imageUrl: "/images/Job.jpg", // Make sure this file actually exists
-    description:
-      "Join our dynamic marketing team to shape our media strategy and brand presence."
-  },
-  {
-    id: 2,
-    title: "Frontend Developer Intern",
-    company: "Tech Solutions Inc.",
-    location: "New York, US",
-    datePosted: "2025-02-28",
-    category: "Software",
-    featured: true,
-    imageUrl: "/images/Job.jpg",
-    description:
-      "Work with our senior developers to build world-class applications for our clients."
-  },
-  {
-    id: 3,
-    title: "DevOps Engineer Intern",
-    company: "Cloud Innovators",
-    location: "Berlin, DE",
-    datePosted: "2025-03-03",
-    category: "DevOps",
-    featured: true,
-    imageUrl: "/images/Job.jpg",
-    description:
-      "Help maintain and evolve our cloud infrastructure, CI/CD pipelines, and monitoring solutions."
-  },
-  {
-    id: 4,
-    title: "UI/UX Designer Intern",
-    company: "Creative Studio",
-    location: "San Francisco, US",
-    datePosted: "2025-03-02",
-    category: "Design",
-    featured: false,
-    imageUrl: "/images/Job.jpg",
-    description:
-      "Collaborate with product managers and developers to create intuitive and engaging user interfaces."
-  },
-  {
-    id: 5,
-    title: "Data Analyst Intern",
-    company: "Finance Corp",
-    location: "London, UK",
-    datePosted: "2025-02-20",
-    category: "Data",
-    featured: false,
-    imageUrl: "/images/Job.jpg",
-    description:
-      "Work with large datasets to derive insights that drive financial decisions."
-  },
-  {
-    id: 6,
-    title: "Business Development Intern",
-    company: "Global Ventures",
-    location: "Singapore, SG",
-    datePosted: "2025-02-15",
-    category: "Sales",
-    featured: false,
-    imageUrl: "/images/Job.jpg", // Example if your actual file is "Job.jpg"
-    description:
-      "Assist in identifying new business opportunities and strategic partnerships."
-  }
-];
 
 export default function Dashboard() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"search" | "saved" | "alerts">(
-    "search"
-  );
+  const [activeTab, setActiveTab] = useState("search");
   const [username, setUsername] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [jobs, setJobs] = useState(JOBS_DATA);
   const [sortBy, setSortBy] = useState("");
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const storedUsername = localStorage.getItem("username");
     if (storedUsername) {
       setUsername(storedUsername);
     } else {
-      // If no user is logged in, redirect to login
       router.push("/login");
     }
   }, [router]);
@@ -107,7 +32,6 @@ export default function Dashboard() {
     router.push("/login");
   };
 
-  // Filter jobs based on the search term
   const filteredJobs = jobs.filter((job) => {
     const lowerSearch = searchTerm.toLowerCase();
     return (
@@ -118,26 +42,48 @@ export default function Dashboard() {
     );
   });
 
-  // Sort the filtered jobs based on `sortBy`
   const sortedJobs = [...filteredJobs].sort((a, b) => {
     if (sortBy === "date") {
-      // Sort by most recent date first
       return new Date(b.datePosted).getTime() - new Date(a.datePosted).getTime();
     }
     if (sortBy === "city") {
       return a.location.localeCompare(b.location);
     }
-    // Default: no sort
     return 0;
   });
 
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    setLoading(true);
+
+    try {
+      const res = await fetch("http://localhost:4000/extract", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      // For simplicity: fake match % logic
+      const jobsWithMatch = jobs.map((job) => ({
+        id: job.id,
+        match: Math.floor(Math.random() * 100) + 1
+      }));
+      setRecommendations(jobsWithMatch);
+    } catch (err) {
+      alert("Failed to upload and analyze file.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="bg-gray-100 min-h-screen">
-      {/* NAVBAR */}
       <nav className="flex items-center justify-between px-8 py-6 bg-white shadow-md relative">
-        <h1 className="text-2xl font-bold text-blue-600">
-          Internship Hub
-        </h1>
+        <h1 className="text-2xl font-bold text-blue-600">Internship Hub</h1>
         <div>
           {username ? (
             <button
@@ -157,38 +103,30 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      {/* WELCOME */}
       {username && (
         <div className="text-center mt-6 text-xl font-semibold text-gray-700">
           Hello, {username}!
         </div>
       )}
 
-      {/* TABS */}
       <div className="flex justify-center space-x-8 mt-6 border-b">
-        {[
-          { name: "Search", key: "search" },
-          { name: "Saved", key: "saved" },
-          { name: "Alerts", key: "alerts" },
-        ].map((tab) => (
+        {["search", "saved", "alerts"].map((tab) => (
           <button
-            key={tab.key}
+            key={tab}
             className={`pb-2 text-lg font-semibold ${
-              activeTab === tab.key
+              activeTab === tab
                 ? "text-blue-600 border-b-2 border-blue-600"
                 : "text-gray-500"
             }`}
-            onClick={() => setActiveTab(tab.key as "search" | "saved" | "alerts")}
+            onClick={() => setActiveTab(tab)}
           >
-            {tab.name}
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
 
-      {/* SEARCH TAB CONTENT */}
       {activeTab === "search" && (
         <>
-          {/* SEARCH BAR */}
           <div className="flex justify-center mt-6">
             <input
               type="text"
@@ -199,27 +137,47 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* FILTERS / SORT */}
           <div className="flex justify-center mt-4 space-x-4">
-            <button
-              onClick={() => setSortBy("date")}
-              className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200"
-            >
-              Date posted
-            </button>
-            <button
-              onClick={() => setSortBy("city")}
-              className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200"
-            >
-              City
-            </button>
-            <button
-              onClick={() => setSortBy("")}
-              className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200"
-            >
-              Clear Sort
-            </button>
+            <button onClick={() => setSortBy("date")} className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200">Date posted</button>
+            <button onClick={() => setSortBy("city")} className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200">City</button>
+            <button onClick={() => setSortBy("")} className="border px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-200">Clear Sort</button>
           </div>
+
+          {/* PDF UPLOAD BUTTON */}
+          <div className="text-center mt-6">
+            <label className="inline-block cursor-pointer bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">
+              {loading ? "Analyzing..." : "Upload CV/Transcript to Get Job Suggestions"}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={handleUpload}
+              />
+            </label>
+          </div>
+
+          {/* JOB RECOMMENDATIONS */}
+          {recommendations.length > 0 && (
+            <div className="mt-10 px-8">
+              <h2 className="text-xl font-semibold mb-4">Recommended Jobs for You</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {recommendations.map((rec) => {
+                  const job = jobs.find((j) => j.id === rec.id);
+                  if (!job) return null;
+                  return (
+                    <Link href={`/jobs/${job.id}`} key={job.id}>
+                      <div className="bg-white p-4 rounded shadow hover:shadow-md">
+                        <h3 className="font-semibold text-lg">{job.title}</h3>
+                        <p className="text-blue-600">{job.company}</p>
+                        <p className="text-sm text-gray-500">{job.location}</p>
+                        <p className="mt-2 text-green-600 text-sm font-medium">Match: {rec.match}%</p>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* JOB LISTINGS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 px-8 py-8">
@@ -232,7 +190,6 @@ export default function Dashboard() {
                 className="bg-white p-6 rounded-lg shadow-md hover:shadow-lg transition cursor-pointer"
               >
                 <Link href={`/jobs/${job.id}`}>
-                  {/* If you use next/image, swap <img> with <Image> */}
                   <div>
                     {job.featured && (
                       <span className="bg-yellow-200 text-yellow-800 text-xs font-bold px-2 py-1 rounded">
@@ -244,18 +201,12 @@ export default function Dashboard() {
                       alt={job.title}
                       className="w-full h-40 object-cover mt-3 rounded"
                     />
-                    <h3 className="text-lg font-semibold mt-4">
-                      {job.title}
-                    </h3>
+                    <h3 className="text-lg font-semibold mt-4">{job.title}</h3>
                     <p className="text-blue-600">{job.company}</p>
                     <p className="text-gray-500">{job.location}</p>
-                    <p className="text-sm text-gray-400 mt-2">
-                      Date Posted: {job.datePosted}
-                    </p>
+                    <p className="text-sm text-gray-400 mt-2">Date Posted: {job.datePosted}</p>
                     <div className="mt-4">
-                      <span className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm">
-                        {job.category}
-                      </span>
+                      <span className="bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm">{job.category}</span>
                     </div>
                   </div>
                 </Link>
@@ -265,14 +216,12 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* SAVED TAB (placeholder) */}
       {activeTab === "saved" && (
         <div className="text-center mt-6 text-lg text-gray-500">
           You have not saved any jobs yet.
         </div>
       )}
 
-      {/* ALERTS TAB (placeholder) */}
       {activeTab === "alerts" && (
         <div className="text-center mt-6 text-lg text-gray-500">
           You have no new alerts.

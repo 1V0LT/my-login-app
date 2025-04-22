@@ -1,29 +1,49 @@
-export const runtime = 'nodejs';
+import { NextResponse } from "next/server";
+import { promises as fs } from "fs";
+import path from "path";
+import pdfParse from "pdf-parse";
+import { IncomingForm } from "formidable";
+import { JOBS_DATA } from "@/data/jobs";
 
-// @ts-ignore
-import pdfParse from 'pdf-parse';
-import { NextResponse } from 'next/server';
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+async function parseForm(req: Request): Promise<{ filepath: string }> {
+  const form = new IncomingForm({ uploadDir: "/tmp", keepExtensions: true });
+
+  return new Promise((resolve, reject) => {
+    form.parse(req as any, (err, fields, files) => {
+      if (err) return reject(err);
+      const file = files.file?.[0] || files.pdf?.[0];
+      if (!file) return reject("No file uploaded.");
+      resolve({ filepath: file.filepath });
+    });
+  });
+}
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const file = formData.get('file') as File;
+    const { filepath } = await parseForm(req);
+    const data = await fs.readFile(filepath);
+    const pdfText = await pdfParse(data);
 
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: 'No file uploaded or invalid type' }, { status: 400 });
-    }
+    const text = pdfText.text.toLowerCase();
 
-    if (file.type !== 'application/pdf') {
-      return NextResponse.json({ error: 'Only PDF files are supported' }, { status: 415 });
-    }
+    const ranked = JOBS_DATA.map((job) => {
+      const score =
+        (text.includes(job.title.toLowerCase()) ? 40 : 0) +
+        (text.includes(job.category.toLowerCase()) ? 30 : 0) +
+        (text.includes(job.description.toLowerCase()) ? 30 : 0);
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await pdfParse(buffer);
+      return { id: job.id, match: score };
+    }).sort((a, b) => b.match - a.match);
 
-    return NextResponse.json({ text: result.text || 'No text extracted' });
-
+    return NextResponse.json({ jobs: ranked });
   } catch (err: any) {
-    console.error("❌ PDF parsing error:", err.message);
-    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 });
+    console.error("Upload error:", err);
+    return NextResponse.json({ error: "Failed to parse PDF." }, { status: 500 });
   }
 }
