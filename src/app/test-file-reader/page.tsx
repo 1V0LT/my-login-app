@@ -19,29 +19,21 @@ export default function TestFileReader() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/upload', {
+      const res = await fetch('http://localhost:4000/extract', {
         method: 'POST',
         body: formData,
       });
-
-      const contentType = res.headers.get("content-type");
 
       if (!res.ok) {
         const errorText = await res.text();
         throw new Error(errorText || 'API returned error');
       }
 
-      if (contentType?.includes("application/json")) {
-        const data = await res.json();
-        setText(data.text || data.error || "No result");
-      } else {
-        const fallbackText = await res.text();
-        setText(fallbackText || "No result");
-      }
-
+      const data = await res.json();
+      setText(data.text || 'No result');
     } catch (err: any) {
-      console.error("Upload failed:", err);
-      setText("Error: " + (err.message || "Unknown error"));
+      console.error('Upload failed:', err);
+      setText('Error: ' + (err.message || 'Unknown error'));
     }
 
     setLoading(false);
@@ -58,12 +50,13 @@ export default function TestFileReader() {
             accept="application/pdf"
             className="block w-full"
           />
-          <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">
-            Upload PDF
+          <button
+            type="submit"
+            className="bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            {loading ? 'Processing...' : 'Upload PDF'}
           </button>
         </form>
-
-        {loading && <p className="mt-4 text-gray-700">Processing...</p>}
 
         {text && (
           <div className="mt-6">
