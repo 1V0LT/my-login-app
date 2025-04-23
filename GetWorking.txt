@@ -1,2 +1,2 @@
 npm run dev
-node parser-server.js
+node parser-server.mjs

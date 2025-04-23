@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { JOBS_DATA } from "../../data/jobs"; // ✅ correct relative path
 
-
 export default function Dashboard() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("search");
@@ -61,20 +60,19 @@ export default function Dashboard() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:4000/extract", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
         body: formData,
       });
       const data = await res.json();
 
-      // For simplicity: fake match % logic
-      const jobsWithMatch = jobs.map((job) => ({
-        id: job.id,
-        match: Math.floor(Math.random() * 100) + 1
-      }));
-      setRecommendations(jobsWithMatch);
+      if (data.jobs) {
+        setRecommendations(data.jobs);
+      } else {
+        alert("No jobs matched.");
+      }
     } catch (err) {
-      alert("Failed to upload and analyze file.");
+      alert("Failed to analyze file.");
     } finally {
       setLoading(false);
     }
