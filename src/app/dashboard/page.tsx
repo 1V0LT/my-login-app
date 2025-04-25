@@ -58,7 +58,7 @@ export default function Dashboard() {
     const formData = new FormData();
     formData.append("file", file);
     setLoading(true);
-
+    console.log("Uploading file...",file);
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
