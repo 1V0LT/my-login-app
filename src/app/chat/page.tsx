@@ -163,7 +163,7 @@ Begin the interview by introducing yourself now.`,
         
         // Add the assistant's introduction to the chat
         setMessages([
-          { role: "assistant", content: data.response || "Hello, I'm Alex Chen from TechNova Systems. I'll be conducting your software development interview today. Could you please introduce yourself and share a bit about your background in software development?" }
+          { role: "assistant", content: data.response || "Hello, I'm Chen from TechNova Systems. I'll be conducting your software development interview today. Could you please introduce yourself and share a bit about your background in software development?" }
         ]);
         
         setTypingIndicator(false);

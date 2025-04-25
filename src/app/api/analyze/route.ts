@@ -19,6 +19,11 @@ ${JSON.stringify(
       id, title, description, requirements, skills,
     }))
   )}
+
+  OUT_FORMAT: strictly foloow output format, do not add any other text. IT MUST BE JSON.
+
+  EXAMPLE:
+  [ { "id": 1, "match": 87 }, { "id": 2, "match": 45 } ]
   `;
 }
 
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
 
     const ollamaData = await ollamaRes.json();
     const message = ollamaData.message?.content;
-
+    console.log("Ollama response:", message);
     let parsedMatches;
     try {
       parsedMatches = JSON.parse(message);

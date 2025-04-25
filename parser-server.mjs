@@ -9,7 +9,7 @@ const app = express();
 const upload = multer();
 app.use(cors());
 
-const OLLAMA_API = "http://localhost:11434/api/chat";
+const OLLAMA_API = "http://127.0.0.1:11434/api/chat";
 const MODEL = "llama3";
 
 // ✅ Load jobs data from JSON
