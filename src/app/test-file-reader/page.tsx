@@ -11,32 +11,46 @@ export default function TestFileReader() {
     const form = e.currentTarget;
     const fileInput = form.file as HTMLInputElement;
 
-    if (!fileInput?.files?.[0]) return;
-
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
+    if (!fileInput?.files?.[0]) {
+      console.log('No file selected.');
+      return;
+    }
 
     setLoading(true);
+    console.log('File upload started.');
 
     try {
-      const res = await fetch('http://localhost:4000/extract', {
-        method: 'POST',
-        body: formData,
-      });
+      const file = fileInput.files[0];
+      console.log(`File selected: ${file.name}`);
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(errorText || 'API returned error');
-      }
+      // Convert file to base64
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64File = (reader.result as string).split(',')[1];
 
-      const data = await res.json();
-      setText(data.text || 'No result');
+        // Send the file to the server
+        const response = await fetch('/api/extract-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: base64File }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to extract text');
+        }
+
+        const data = await response.json();
+        setText(data.text);
+        console.log('Text extraction successful.');
+      };
     } catch (err: any) {
-      console.error('Upload failed:', err);
+      console.error('Failed to parse PDF:', err);
       setText('Error: ' + (err.message || 'Unknown error'));
     }
 
     setLoading(false);
+    console.log('File upload process completed.');
   };
 
   return (
@@ -53,6 +67,7 @@ export default function TestFileReader() {
           <button
             type="submit"
             className="bg-blue-500 text-white px-4 py-2 rounded"
+            disabled={loading}
           >
             {loading ? 'Processing...' : 'Upload PDF'}
           </button>

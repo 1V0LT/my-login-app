@@ -21,7 +21,6 @@ ${JSON.stringify(
   )}
 
   OUT_FORMAT: strictly foloow output format, do not add any other text. IT MUST BE JSON.
-
   EXAMPLE:
   [ { "id": 1, "match": 87 }, { "id": 2, "match": 45 } ]
   `;

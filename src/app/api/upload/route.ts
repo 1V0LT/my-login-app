@@ -1,7 +1,27 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import path from "path";
 import pdfParse from "pdf-parse";
+import path from "path";
+...
+    const data = await fs.readFile(filepath);
+    const pdfText = await pdfParse(data);
+
+    // Log the parsed PDF text
+    console.log("Parsed PDF text:", pdfText.text);
+
+    const text = pdfText.text.toLowerCase();
+
+    const ranked = JOBS_DATA.map((job) => {
+      const score =
+        (text.includes(job.title.toLowerCase()) ? 40 : 0) +
+        (text.includes(job.category.toLowerCase()) ? 30 : 0) +
+        (text.includes(job.description.toLowerCase()) ? 30 : 0);
+
+      return { id: job.id, match: score };
+    }).sort((a, b) => b.match - a.match);
+
+    return NextResponse.json({ jobs: ranked });
+...
 import { IncomingForm } from "formidable";
 import { JOBS_DATA } from "@/data/jobs";
 
