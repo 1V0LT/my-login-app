@@ -6,7 +6,7 @@ const MODEL = "llama3";
 
 function buildPrompt(cvText: string) {
   return `
-You are a job-matching assistant AI.
+You are a Internship-matching assistant AI.
 Rate the following CV against each internship and return only valid JSON like:
 [ { "id": 1, "match": 90 }, { "id": 2, "match": 45 } ]
 Use a scoring range from 45 to 90.

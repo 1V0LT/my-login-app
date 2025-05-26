@@ -81,7 +81,7 @@ export default function Dashboard() {
   return (
     <div className="bg-gray-100 min-h-screen">
       <nav className="flex items-center justify-between px-8 py-6 bg-white shadow-md relative">
-        <h1 className="text-2xl font-bold text-blue-600">Internship Hub</h1>
+        <h1 className="text-2xl font-bold text-blue-600">iHub</h1>
         <div>
           {username ? (
             <button
@@ -144,7 +144,7 @@ export default function Dashboard() {
           {/* PDF UPLOAD BUTTON */}
           <div className="text-center mt-6">
             <label className="inline-block cursor-pointer bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">
-              {loading ? "Analyzing..." : "Upload CV/Transcript to Get Job Suggestions"}
+              {loading ? "Analyzing..." : "Upload CV/Transcript to Get Internship Suggestions"}
               <input
                 type="file"
                 accept="application/pdf"
