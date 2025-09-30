@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 const JOBS_DATA = [
   {
     id: 1,
-    title: "Marketing & Media Coordinator",
+    title: "IT Support Intern",
     company: "United Global Services Company",
     location: "Dubai, AE",
     datePosted: "2025-03-01",
@@ -69,7 +69,7 @@ const JOBS_DATA = [
   },
   {
     id: 6,
-    title: "Business Development Intern",
+    title: "Backedn Developer Intern",
     company: "Global Ventures",
     location: "Singapore, SG",
     datePosted: "2025-02-15",

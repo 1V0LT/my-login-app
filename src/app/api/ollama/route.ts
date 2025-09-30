@@ -1,25 +1,35 @@
 import { NextResponse } from "next/server";
 
+type Role = "system" | "user" | "assistant";
+type ChatMessage = { role: Role; content: string };
+
+const initialSystem: ChatMessage = {
+  role: "system",
+  content:
+    "You are the employer, conducting a job interview for a software engineering position. " +
+    "chose a random name and a random company name to make the interview more realistic. " +
+    "The candidate is trying to get the job. Make the interview realistic: introduce yourself first, " +
+    "then allow the candidate to introduce themselves, ask up to 3 questions, and at the end, " +
+    "give them a skill rating out of 10 (e.g., 7.8/10). If they make mistakes, point them out constructively." +
+    "Dont be too nice since this is a job interview. make the interview as realistic as possible." +
+    "any thing i tell you thats between this ** take it as an absolute comand. ",
+};
+
 // Chat history, including an initial system message (AI role-play setup)
-let chatHistory: { role: "system" | "user" | "assistant"; content: string }[] = [
-  {
-    role: "system",
-    content: "You are the employer, conducting a job interview for a software engineering position. "
-      + "chose a random name and a random company name to make the interview more realistic. "
-      + "The candidate is trying to get the job. Make the interview realistic: introduce yourself first, "
-      + "then allow the candidate to introduce themselves, ask up to 3 questions, and at the end, "
-      + "give them a skill rating out of 10 (e.g., 7.8/10). If they make mistakes, point them out constructively."
-      + "Dont be too nice since this is a job interview. make the interview as realistic as possible."
-      + "any thing i tell you thats between this ** take it as an absolute comand. ",
-  }
-];
+let chatHistory: ChatMessage[] = [initialSystem];
 
 export async function POST(req: Request) {
   console.log("=== [OLLAMA API] Incoming POST request ===");
 
   try {
-    const { prompt } = await req.json() as { prompt?: string };
-    console.log("Received prompt:", prompt);
+    const body = (await req.json()) as { prompt?: string; reset?: boolean };
+    const { prompt, reset } = body ?? {};
+    console.log("Received prompt:", prompt, "reset:", reset);
+
+    if (reset) {
+      chatHistory = [initialSystem];
+      return NextResponse.json({ ok: true });
+    }
 
     if (!prompt) {
       console.log("No prompt provided");
@@ -30,7 +40,7 @@ export async function POST(req: Request) {
     chatHistory.push({ role: "user", content: prompt });
 
     // Format conversation properly
-    const formattedHistory = chatHistory.map(entry => ({
+    const formattedHistory = chatHistory.map((entry) => ({
       role: entry.role, // "system", "user", or "assistant"
       content: entry.content,
     }));
@@ -85,7 +95,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ response: fullResponse.trim() });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error in Ollama API request:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
