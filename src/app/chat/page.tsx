@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { JOBS_DATA } from "@/shared";
 
 type Role = "system" | "user" | "assistant";
 type Message = {
@@ -22,6 +24,12 @@ function uuid() {
 }
 
 export default function ChatPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobParam = searchParams.get('job');
+  const jobId = jobParam ? Number(jobParam) : undefined;
+  const jobContext = useMemo(()=> JOBS_DATA.find(j => j.id === jobId), [jobId]);
+  const [contextApplied, setContextApplied] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -183,30 +191,22 @@ export default function ChatPage() {
 
   // Automatically start the interview on a fresh chat
   useEffect(() => {
-    if (messages.length === 0) {
-      void sendPrompt(
-        `You are an AI interviewer for a Software Development position.
-        You must introduce yourself with a random name and mention a random tech company name ONLY ONCE at the very start. After that, do not re-introduce yourself.
-
-        Guidelines:
-        1. Start with a single introduction, then proceed as if you're conducting a real interview.
-        2. Ask exactly 3 software-development-related questions.
-        3. Assess the candidate's answers, offering short feedback.
-        4. At the end only, give the candidate a rating out of 10 with final remarks.
-        5. Stay polite, professional, and consistent.
-        6. Do not allow mistakes to go unnoticed.
-        7. Do not add notes or comments outside the interview context.
-        8. When i tell you my name greet me with it, then ask questions.
-        9. Do not put your emotions in ** since you have to act like a real human
-        10. Do not allow the candidate to use slang or informal language.
-        11. Keep 20 to 30 words per message STRICYLY.
-        12. If the candidate asks to change the topic, politely decline and steer back to the interview.
-        \nBegin the interview.`,
-        true
-      );
+    // On first mount with zero messages, reset server conversation with jobId (if any) then start interview.
+    if (messages.length === 0 && !contextApplied) {
+      (async () => {
+        try {
+          await fetch('/api/ollama', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reset: true, jobId }) });
+          setContextApplied(true);
+          const baseIntro = jobContext ? `Conduct an interview tailored for the role: ${jobContext.title} at ${jobContext.company}. Begin now.` : 'Begin the interview.';
+          await sendPrompt(baseIntro, true);
+        } catch {
+          setContextApplied(true);
+          await sendPrompt('Begin the interview.', true);
+        }
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length]);
+  }, [messages.length, contextApplied, jobId, jobContext]);
 
   const stopGeneration = () => {
     abortRef.current?.abort();
@@ -250,19 +250,32 @@ export default function ChatPage() {
     } catch {}
   };
 
-  const headerSubtitle = useMemo(
-    () => (isLoading ? "Assistant is typing…" : "Model: llama3.2"),
-    [isLoading]
-  );
+  const headerSubtitle = useMemo(() => {
+    if (isLoading) return 'Assistant is typing…';
+    if (jobContext) return `Model: llama3.2 • Job: ${jobContext.title}`;
+    return 'Model: llama3.2';
+  }, [isLoading, jobContext]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900">
       <div className="mx-auto max-w-4xl h-screen flex flex-col px-4 py-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 py-2">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">AI Interviewer</h1>
-            <p className="text-xs sm:text-sm text-slate-500">{headerSubtitle}</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.back()}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-50 shadow-sm"
+              title="Go back"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              <span className="hidden sm:inline">Back</span>
+            </button>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">AI Interviewer</h1>
+              <p className="text-xs sm:text-sm text-slate-500">{headerSubtitle}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -298,6 +311,16 @@ export default function ChatPage() {
           </div>
         )}
 
+        {/* Job context banner */}
+        {jobContext && (
+          <div className="mb-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800 flex items-start justify-between gap-2">
+            <div>
+              <span className="font-semibold">Interview Context:</span> {jobContext.title} • {jobContext.company}
+              <div className="mt-0.5 text-[10px] text-blue-700">Key Skills: {jobContext.skills.slice(0,5).join(', ')}</div>
+            </div>
+            <button onClick={()=>router.push('/chat')} className="text-[10px] underline hover:no-underline">Clear</button>
+          </div>
+        )}
         {/* Messages */}
         <div
           ref={chatContainerRef}

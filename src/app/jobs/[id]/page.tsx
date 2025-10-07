@@ -4,25 +4,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
+import { JOBS_DATA } from "@/shared";
 
 // Example data. Use your real data or fetch from an API.
-type Job = {
-  id: number;
-  title: string;
-  company: string;
-  location: string;
-  datePosted: string; // ISO
-  category: string;
-  featured: boolean;
-  imageUrl: string;
-  description: string; // HTML
-  requirements: string; // HTML
-  skills: string[];
-  degree: string;
-  qualifications: string;
-  experience: string;
-  visaOptions: string[];
-};
+type Job = typeof JOBS_DATA[number];
 
 type SimilarJob = {
   id: number;
@@ -33,82 +18,10 @@ type SimilarJob = {
   categories: string[];
 };
 
-const JOBS_DATA: Job[] = [
-  {
-    id: 1,
-    title: "IT Support Intern",
-    company: "United Global Services Company",
-    location: "Dubai, United Arab Emirates AE",
-    datePosted: "2025-03-01",
-    category: "IT",
-    featured: true,
-    imageUrl: "/images/Job.jpg",
-    description: `
-      <p class="mb-2">Join our IT team as an intern and gain hands-on experience supporting end users and maintaining internal systems.</p>
-      <ul class="list-disc ml-5 space-y-2">
-        <li>Provide first-line helpdesk support for hardware, software, accounts, and peripherals.</li>
-        <li>Troubleshoot Windows/macOS issues and standard apps (Microsoft 365, Google Workspace).</li>
-        <li>Assist with device imaging, setup, asset inventory, and routine maintenance.</li>
-        <li>Support basic network tasks: cable management, Wi‑Fi checks, and device connectivity under supervision.</li>
-        <li>Document procedures, create user guides, and maintain accurate ticket updates.</li>
-        <li>Automate simple tasks using scripts (PowerShell, Bash, or Python).</li>
-        <li>Collaborate on security best practices, patching, and endpoint protection.</li>
-      </ul>
-    `,
-    requirements: `
-      <ul class="list-disc ml-5 space-y-2">
-        <li>Currently pursuing or recently graduated in Computer Science, Information Technology, or a related field.</li>
-        <li>Basic understanding of operating systems (Windows/macOS) and computer hardware.</li>
-        <li>Familiarity with networking fundamentals (TCP/IP, DNS, DHCP) is a plus.</li>
-        <li>Exposure to ticketing systems and remote support tools preferred.</li>
-        <li>Ability to write simple scripts (PowerShell/Bash/Python) is an advantage.</li>
-        <li>Strong communication, customer service mindset, and problem-solving skills.</li>
-      </ul>
-    `,
-    skills: [
-      "IT Support",
-      "Troubleshooting",
-      "Windows",
-      "macOS",
-      "Microsoft 365",
-      "Networking Basics",
-      "PowerShell",
-      "Python"
-    ],
-    degree: "Bachelors Degree (Computer Science, Information Technology, or related)",
-    qualifications: "Information Technology / Computer Science",
-    experience: "0 to 1",
-    visaOptions: ["Student Visa", "Parent Visa", "Emirati Visa", "Employee Visa", "Spouse Visa", "Gcc Citizen"]
-  },
-  // Add more jobs...
-];
+// Remove local JOBS_DATA (now imported)
 
-const SIMILAR_JOBS: SimilarJob[] = [
-  {
-    id: 2,
-    title: "Marketing Executive",
-    company: "IEX Recreational Playground LLC",
-    location: "Dubai, AE",
-    imageUrl: "/images/Job.jpg",
-    categories: ["Admin", "Grad", "Content"]
-  },
-  {
-    id: 3,
-    title: "Marketing Intern",
-    company: "Halper",
-    location: "Dubai, AE",
-    imageUrl: "/images/Job.jpg",
-    categories: ["Search", "SEO", "Marketing"]
-  },
-  {
-    id: 4,
-    title: "Marketing Intern",
-    company: "IOT World",
-    location: "Dubai, AE",
-    imageUrl: "/images/Job.jpg",
-    categories: ["Comm", "Email", "Content"]
-  },
-];
+// Compute similar jobs later after job is known
+const INITIAL_SIMILAR: SimilarJob[] = [];
 
 // Small helpers
 const formatDate = (iso: string) => {
@@ -134,6 +47,7 @@ export default function JobDetailPage() {
   const router = useRouter();
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
+  const [similar, setSimilar] = useState<SimilarJob[]>(INITIAL_SIMILAR);
 
   useEffect(() => {
     if (!id) {
@@ -141,14 +55,39 @@ export default function JobDetailPage() {
       router.push("/dashboard");
       return;
     }
-    const jobData = JOBS_DATA.find((j) => j.id === Number(id));
+  const jobData = JOBS_DATA.find((j) => j.id === Number(id));
     if (!jobData) {
       router.push("/dashboard");
       return;
     }
     setJob(jobData);
+    // derive similar jobs: same category or overlapping skills, exclude self
+    const similarPool = JOBS_DATA.filter(j => j.id !== jobData.id);
+    const ranked = similarPool
+      .map(j => ({
+        job: j,
+        score: (j.category === jobData.category ? 2 : 0) + j.skills.filter(s => jobData.skills.includes(s)).length
+      }))
+      .sort((a,b) => b.score - a.score)
+      .slice(0,3)
+      .map(({job:j}) => ({
+        id: j.id,
+        title: j.title,
+        company: j.company,
+        location: j.location,
+        imageUrl: j.imageUrl,
+        categories: j.skills.slice(0,3)
+      }));
+    setSimilar(ranked);
     setLoading(false);
   }, [id, router]);
+
+  // Ensure scroll top on mount / id change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+    }
+  }, [id]);
 
   if (loading || !job) {
     return (
@@ -279,18 +218,26 @@ export default function JobDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* LEFT CONTENT */}
           <div className="col-span-2 space-y-6">
-            <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.35 }} className="bg-white rounded-xl shadow-sm border p-6">
+            <motion.div variants={fadeUp} initial="hidden" animate="show" transition={{ duration: 0.35 }} className="bg-white rounded-xl shadow-sm border p-6">
               <h2 className="text-lg md:text-xl font-semibold mb-3">About this role</h2>
               {/* dangerouslySetInnerHTML only if you trust the data */}
-              <div className="prose prose-sm max-w-none text-gray-700 [&_ul]:list-disc [&_ul]:ml-5" dangerouslySetInnerHTML={{ __html: job.description }} />
+              <div className="space-y-4 text-gray-700 text-sm leading-relaxed">
+                {job.description.split(/\n\n+/).map((para, idx) => (
+                  <p key={idx}>{para.trim()}</p>
+                ))}
+              </div>
             </motion.div>
 
-            <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.4 }} className="bg-white rounded-xl shadow-sm border p-6">
+            <motion.div variants={fadeUp} initial="hidden" animate="show" transition={{ duration: 0.4 }} className="bg-white rounded-xl shadow-sm border p-6">
               <h2 className="text-lg md:text-xl font-semibold mb-3">Requirements to apply</h2>
-              <div className="prose prose-sm max-w-none text-gray-700 [&_ul]:list-disc [&_ul]:ml-5" dangerouslySetInnerHTML={{ __html: job.requirements }} />
+              <ul className="list-disc ml-5 space-y-1 text-gray-700 text-sm">
+                {Array.isArray(job.requirements) ? job.requirements.map(r => (
+                  <li key={r}>{r}</li>
+                )) : null}
+              </ul>
             </motion.div>
 
-            <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.45 }} className="bg-white rounded-xl shadow-sm border p-6">
+            <motion.div variants={fadeUp} initial="hidden" animate="show" transition={{ duration: 0.45 }} className="bg-white rounded-xl shadow-sm border p-6">
               <h2 className="text-lg md:text-xl font-semibold mb-4">Skills</h2>
               <div className="flex flex-wrap gap-2">
                 {job.skills?.map((skill: string) => (
@@ -304,7 +251,7 @@ export default function JobDetailPage() {
 
           {/* RIGHT CONTENT */}
           <div className="lg:sticky lg:top-6 space-y-6">
-            <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.35 }} className="bg-white rounded-xl shadow-sm border p-6">
+            <motion.div variants={fadeUp} initial="hidden" animate="show" transition={{ duration: 0.35 }} className="bg-white rounded-xl shadow-sm border p-6">
               <h2 className="text-base md:text-lg font-semibold mb-3">Education and Experience</h2>
               <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                 <dt className="text-gray-500">Degree</dt>
@@ -341,7 +288,7 @@ export default function JobDetailPage() {
               <div className="pt-4">
                 <button
                   className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-4 text-sm font-semibold transition"
-                  onClick={() => router.push("/chat")}
+                  onClick={() => router.push(`/chat?job=${job.id}`)}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M22 2L11 13"></path>
@@ -355,10 +302,10 @@ export default function JobDetailPage() {
         </div>
 
         {/* SIMILAR JOBS */}
-        <motion.div variants={fadeUp} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.35 }} className="mt-10">
+        <motion.div variants={fadeUp} initial="hidden" animate="show" transition={{ duration: 0.35 }} className="mt-10">
           <h2 className="text-lg md:text-xl font-semibold mb-4">Other Jobs</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {SIMILAR_JOBS.map((sjob) => (
+            {similar.map((sjob) => (
               <motion.div
                 key={sjob.id}
                 className="group relative cursor-pointer overflow-hidden rounded-xl border bg-white shadow-sm"
