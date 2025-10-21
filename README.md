@@ -34,3 +34,37 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Local Interview (Camera + On-device cues)
+
+- New page at `/local-interview`. If you open it from a job (e.g., Apply buttons), it can include job context via the `?job=<id>` query.
+- Uses the browser camera and draws a simple overlay. If MediaPipe assets are present, it detects light head movement to derive nonverbal cues (nodding/shaking) and feeds those cues into the interviewer prompt.
+- Assistant voice uses on-device SpeechSynthesis (TTS). Voice input uses the browser's SpeechRecognition if available.
+
+Offline note for MediaPipe:
+
+1. Download MediaPipe Tasks files for Face Landmarker (e.g., `face_landmarker.task` and required wasm assets) from the official MediaPipe repository.
+2. Create a folder `public/mediapipe` and place the files there. Example paths:
+	- `public/mediapipe/face_landmarker.task`
+	- `public/mediapipe/wasm/`
+3. The app will attempt to load from `/mediapipe`. If files are missing, it will still run without cues.
+
+Tip: This page calls your existing `/api/ollama` route. Ensure your local model endpoint at `http://localhost:11434` is running and the desired model (e.g., `llama3.2`) is available.
+
+### Optional: Online TTS (cloud)
+
+You can enable a cloud TTS provider (ElevenLabs) as an alternative to the browser's SpeechSynthesis voices. This often sounds more natural.
+
+1. Create an ElevenLabs API key and pick a voice ID
+2. Add the following to `.env.local` (or your environment):
+
+```
+ELEVENLABS_API_KEY=your_api_key_here
+ELEVENLABS_VOICE_ID=your_voice_id_here
+# Optional: default the UI to use online TTS
+# NEXT_PUBLIC_TTS_ONLINE=1
+# Optional model id
+# ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+```
+
+When configured, toggle "Online TTS" in the `/local-interview` toolbar. If the API is unavailable, the app falls back to on-device TTS automatically.
