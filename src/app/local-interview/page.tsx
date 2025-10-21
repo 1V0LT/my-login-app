@@ -170,6 +170,23 @@ export default function LocalInterviewPage() {
     }
   }, [voiceURI]);
 
+  // Preflight: if online TTS isn't configured server-side, disable it to avoid repeated 400s
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/tts", { method: "GET" });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => ({}))) as { configured?: boolean };
+        if (!cancelled && data && data.configured === false) {
+          setUseOnlineTTS(false);
+          try { localStorage.setItem("tts.online", "0"); } catch {}
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Persist TTS prefs
   useEffect(() => {
     try {
@@ -361,13 +378,13 @@ export default function LocalInterviewPage() {
     const readyForAlert = now - lastEnvAlertRef.current > cooldownMs;
     let message: string | null = null;
     if (hasPhone && !alertedPhoneRef.current) {
-      message = "Observation: A cell phone is visible in the interview. Politely remind the candidate that using a phone during the interview is not allowed and ask them to put it away.";
+      message = "Observation: A cell phone is visible in the interview. Politely remind the candidate that using a phone during the interview is not allowed and ask them to put it away. Do not reintroduce yourself; keep it brief and direct.";
       alertedPhoneRef.current = true;
     }
     if (extraPeople && !alertedPeopleRef.current) {
       message = message
-        ? message + " Also, more than one person appears to be present; ask the candidate to continue the interview alone."
-        : "Observation: More than one person appears in the frame. Politely remind the candidate that only the applicant should be present during the interview.";
+        ? message + " Also, more than one person appears to be present; ask the candidate to continue the interview alone. Do not reintroduce yourself; keep it brief and direct."
+        : "Observation: More than one person appears in the frame. Politely remind the candidate that only the applicant should be present during the interview. Do not reintroduce yourself; keep it brief and direct.";
       alertedPeopleRef.current = true;
     }
     if ((hasPhone || extraPeople) && readyForAlert && message) {
@@ -430,6 +447,10 @@ export default function LocalInterviewPage() {
             URL.revokeObjectURL(url);
           };
           return;
+        } else if (res.status === 400) {
+          // Not configured or invalid request; disable Online TTS to avoid repeated errors
+          setUseOnlineTTS(false);
+          try { localStorage.setItem("tts.online", "0"); } catch {}
         }
       } catch {
         // fall back to browser TTS
@@ -540,13 +561,7 @@ export default function LocalInterviewPage() {
                       <option key={v.voiceURI} value={v.voiceURI}>{v.label}</option>
                     ))}
                   </select>
-                  <label className="hidden md:flex items-center gap-1 text-xs text-slate-600" title="TTS Rate">
-                    <span>Rate</span>
-                    <input type="range" min={0.6} max={1.4} step={0.05}
-                      value={rate}
-                      onChange={(e)=>setRate(Number(e.target.value))}
-                    />
-                  </label>
+                  {/* Rate slider removed as requested */}
                   <button onClick={()=>setShowTranscript(v=>!v)} className="text-xs rounded-md border px-2 py-1 bg-white hover:bg-slate-50">
                     {showTranscript ? "Expand Camera" : "Show Transcript"}
                   </button>
@@ -559,8 +574,7 @@ export default function LocalInterviewPage() {
                 <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
                 {/* Removed thumbs up badge per request */}
               </div>
-              <div className="mt-2 text-[11px] text-slate-600">Cues: nodding={cues.nodding?"yes":"no"} • shaking={cues.shaking?"yes":"no"} • attentive={cues.attentive?"yes":"no"}</div>
-              <div className="mt-1 text-[11px] text-slate-500">Tip: Place MediaPipe assets under /public/mediapipe to run fully offline.</div>
+              {/* Removed cues and tip lines as requested */}
             </div>
           </div>
 
@@ -608,11 +622,9 @@ export default function LocalInterviewPage() {
                   title={sttAvailable ? "Speak your answer" : "Browser STT not available"}
                 >{sttOn?"Listening…":"🎙️ Speak"}</button>
               </div>
-              <div className="mt-1 text-[11px] text-slate-500">TTS: On-device speechSynthesis • STT: Browser STT (may not be fully offline)</div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

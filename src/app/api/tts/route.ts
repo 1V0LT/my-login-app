@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 // Optional: keep this route on the Node runtime to allow streaming/proxying
 export const runtime = "nodejs";
 
+export async function GET() {
+  const configured = Boolean(process.env.ELEVENLABS_API_KEY);
+  return NextResponse.json({ configured });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { text, voiceId } = (await req.json().catch(() => ({}))) as {
@@ -17,17 +22,39 @@ export async function POST(req: NextRequest) {
     const defaultVoice = process.env.ELEVENLABS_VOICE_ID; // set this in env
     const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
 
-    if (!apiKey || !(voiceId || defaultVoice)) {
+    if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "Online TTS not configured. Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID env vars.",
+            "Online TTS not configured. Set ELEVENLABS_API_KEY env var.",
         },
         { status: 400 }
       );
     }
 
-    const chosenVoice = voiceId || (defaultVoice as string);
+    let chosenVoice = voiceId || defaultVoice;
+    if (!chosenVoice) {
+      // Try to fetch voices and pick a sensible default (prefer Rachel)
+      const voicesResp = await fetch("https://api.elevenlabs.io/v1/voices", {
+        method: "GET",
+        headers: { "xi-api-key": apiKey, Accept: "application/json" },
+      });
+      if (voicesResp.ok) {
+        const data = (await voicesResp.json().catch(() => ({}))) as { voices?: Array<{ voice_id: string; name?: string }> };
+        const list = Array.isArray(data.voices) ? data.voices : [];
+        const rachel = list.find(v => /rachel/i.test(v.name || ""));
+        chosenVoice = (rachel || list[0])?.voice_id;
+      }
+      if (!chosenVoice) {
+        return NextResponse.json(
+          {
+            error:
+              "No ElevenLabs voice available. Set ELEVENLABS_VOICE_ID or ensure your account has at least one voice.",
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     // ElevenLabs Streaming TTS endpoint
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
