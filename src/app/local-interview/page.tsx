@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { JOBS_DATA } from "@/shared";
 
 // Minimal message type
@@ -18,7 +19,6 @@ export default function LocalInterviewPage() {
 
   // Chat state
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,11 +30,14 @@ export default function LocalInterviewPage() {
 
   // Simple cues
   const [cues, setCues] = useState({ nodding: false, shaking: false, attentive: true, thumbsUp: false });
-  const [gestureAvailable, setGestureAvailable] = useState(false);
+  // Removed gesture UI; keep flag only if needed for future re-introduction (commented out)
+  // const [gestureAvailable, setGestureAvailable] = useState(false);
   const [detectorAvailable, setDetectorAvailable] = useState(false);
   const [detectorOn, setDetectorOn] = useState(true);
   const detectorOnRef = useRef(detectorOn);
   useEffect(() => { detectorOnRef.current = detectorOn; }, [detectorOn]);
+  // Toggle for drawing detection overlays (keep detection running regardless). Default: hide overlays.
+  const [hideDetections, setHideDetections] = useState(true);
 
   // Environment flags derived from object detection
   const [env, setEnv] = useState<{ personCount: number; phone: boolean }>({ personCount: 0, phone: false });
@@ -43,6 +46,9 @@ export default function LocalInterviewPage() {
   const lastEnvAlertRef = useRef<number>(0);
   const alertedPhoneRef = useRef(false);
   const alertedPeopleRef = useRef(false);
+  // Track sustained detection start times (for 2s dwell requirement)
+  const phoneDetectStartRef = useRef<number | null>(null);
+  const peopleDetectStartRef = useRef<number | null>(null);
 
   // Online/CDN paths (user asked to use online). Allow env override with sane defaults
   const MP_BASE = process.env.NEXT_PUBLIC_MEDIAPIPE_BASE || "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm";
@@ -56,17 +62,19 @@ export default function LocalInterviewPage() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceURI, setVoiceURI] = useState<string | null>(null);
   const [rate, setRate] = useState<number>(1);
-  const [displayVoices, setDisplayVoices] = useState<Array<{ label: string; voiceURI: string; lang: string; sourceName: string }>>([]);
+  // Removed voice selection UI; keeping placeholder state commented for potential future use
+  // const [displayVoices, setDisplayVoices] = useState<Array<{ label: string; voiceURI: string; lang: string; sourceName: string }>>([]);
   const [useOnlineTTS, setUseOnlineTTS] = useState<boolean>(() => {
-    // Default to Online TTS ON unless explicitly disabled
+    // Default to Online TTS ON; allow explicit env override to take precedence
     if (typeof window === "undefined") return true;
+    const envDefault = process.env.NEXT_PUBLIC_TTS_ONLINE;
+    if (envDefault === "1") return true;
+    if (envDefault === "0") return false;
     try {
       const saved = localStorage.getItem("tts.online");
       if (saved === "1") return true;
       if (saved === "0") return false;
     } catch {}
-    const envDefault = process.env.NEXT_PUBLIC_TTS_ONLINE;
-    if (envDefault === "0") return false;
     // default ON
     return true;
   });
@@ -76,6 +84,10 @@ export default function LocalInterviewPage() {
   const recRef = useRef<SpeechRecognition | null>(null);
   const [sttOn, setSttOn] = useState(false);
   const [sttAvailable, setSttAvailable] = useState(false);
+  const [autoSttEnabled] = useState(true); // always-on transcription requested
+  const [muted, setMuted] = useState(false); // user mute toggle
+  // Prevents auto-restart during intended pauses (set when TTS is about to play)
+  const sttSuspendedRef = useRef(false);
 
   // Keep latest sender without re-wiring STT
   const sendRef = useRef<(text: string) => void>(() => {});
@@ -94,51 +106,21 @@ export default function LocalInterviewPage() {
         const savedOnline = localStorage.getItem("tts.online");
         if (savedUri) setVoiceURI(savedUri);
         if (savedRate) setRate(Number(savedRate) || 1);
-        if (savedOnline === "1") setUseOnlineTTS(true);
-        else if (savedOnline === "0") setUseOnlineTTS(false);
+        // Environment override takes precedence if explicitly set
+        if (process.env.NEXT_PUBLIC_TTS_ONLINE === "1") setUseOnlineTTS(true);
         else if (process.env.NEXT_PUBLIC_TTS_ONLINE === "0") setUseOnlineTTS(false);
-        else if (process.env.NEXT_PUBLIC_TTS_ONLINE === "1") setUseOnlineTTS(true);
+        else if (savedOnline === "1") setUseOnlineTTS(true);
+        else if (savedOnline === "0") setUseOnlineTTS(false);
       } catch {}
 
       // Populate voices; on some browsers it is async via voiceschanged
       const updateVoices = () => {
         const all = synthRef.current?.getVoices() ?? [];
         setVoices(all);
-        const en = all.filter(x => /en/i.test(x.lang));
-        const picks: Array<{ label: string; voiceURI: string; lang: string; sourceName: string }> = [];
-        const addPick = (regex: RegExp, label: string) => {
-          const v = en.find(x => regex.test(x.name));
-          if (v && !picks.some(p => p.voiceURI === v.voiceURI)) {
-            picks.push({ label, voiceURI: v.voiceURI, lang: v.lang, sourceName: v.name });
-          }
-        };
-        // Curated categories in priority order
-        addPick(/Siri/i, "Siri");
-        addPick(/Natural/i, "Natural");
-        addPick(/Neural/i, "Neural");
-        addPick(/Google/i, "Google");
-        // If we don't have enough curated entries, fill with top English voices
-        if (picks.length < 4 && en.length) {
-          const already = new Set(picks.map(p => p.voiceURI));
-          const score = (name: string) => {
-            let s = 0;
-            if (/Siri|Premium|Enhanced|Neural|Natural|Google/i.test(name)) s += 3;
-            if (/Samantha|Alex|Daniel|Karen|Moira|Victoria|Tessa|Rishi|Kathy|Fred/i.test(name)) s += 2;
-            return s;
-          };
-          const sorted = [...en].sort((a, b) => score(b.name) - score(a.name));
-          for (const v of sorted) {
-            if (already.has(v.voiceURI)) continue;
-            picks.push({ label: `English – ${v.name}`, voiceURI: v.voiceURI, lang: v.lang, sourceName: v.name });
-            if (picks.length >= 4) break;
-          }
-        }
-        if (picks.length === 0 && en[0]) {
-          picks.push({ label: "English (Default)", voiceURI: en[0].voiceURI, lang: en[0].lang, sourceName: en[0].name });
-        }
-        setDisplayVoices(picks);
-        if ((!voiceURI || !picks.some(p => p.voiceURI === voiceURI)) && picks[0]) {
-          setVoiceURI(picks[0].voiceURI);
+        // Auto-select first English voice if none selected
+        if (!voiceURI) {
+          const firstEn = all.find(v => /en/i.test(v.lang));
+          if (firstEn) setVoiceURI(firstEn.voiceURI);
         }
       };
       updateVoices();
@@ -155,20 +137,31 @@ export default function LocalInterviewPage() {
       const SR = w.webkitSpeechRecognition || w.SpeechRecognition;
       if (SR) {
         const rec: SpeechRecognition = new SR();
-        rec.continuous = false; rec.interimResults = false; rec.lang = "en-US";
+        rec.continuous = false; // restart manually on end for better control around TTS pauses
+        rec.interimResults = false; rec.lang = "en-US";
         rec.onresult = (e: SpeechRecognitionEvent) => {
           const text = (e.results?.[0]?.[0]?.transcript ?? "").toString();
           if (text.trim()) {
-            pushUser(text.trim());
+            // sendToModel handles adding the user message; avoid double-adding
             sendRef.current(text.trim());
           }
         };
-        rec.onerror = () => setSttOn(false);
-        rec.onend = () => setSttOn(false);
+        rec.onstart = () => setSttOn(true);
+        rec.onerror = () => {
+          setSttOn(false);
+        };
+        rec.onend = () => {
+          setSttOn(false);
+          // Auto-restart if allowed
+          if (autoSttEnabled && !muted && !speaking && !sttSuspendedRef.current) {
+            try { rec.start(); setSttOn(true); } catch {/* ignore */}
+          }
+        };
         recRef.current = rec; setSttAvailable(true);
       }
     }
-  }, [voiceURI]);
+  // Note: voiceURI changes may alter available voices; auto STT logic depends on speaking/muted state
+  }, [voiceURI, autoSttEnabled, muted, speaking]);
 
   // Preflight: if online TTS isn't configured server-side, disable it to avoid repeated 400s
   useEffect(() => {
@@ -216,6 +209,7 @@ export default function LocalInterviewPage() {
           baseOptions: { modelAssetPath: FACE_MODEL, delegate: "GPU" },
           runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: false,
         });
+        // GestureRecognizer intentionally disabled (UI removed)
         if (GestureRecognizer) {
           try {
             gestureRecognizer = await GestureRecognizer.createFromOptions(files, {
@@ -223,10 +217,8 @@ export default function LocalInterviewPage() {
               runningMode: "VIDEO",
               numHands: 1,
             });
-            setGestureAvailable(true);
           } catch {
-            // gesture recognizer not available or assets missing
-            setGestureAvailable(false);
+            gestureRecognizer = null;
           }
         }
         try {
@@ -291,36 +283,41 @@ export default function LocalInterviewPage() {
           for (const d of dets) {
             const cat = d.categories?.[0];
             const name = (cat?.categoryName || "").toLowerCase();
-            if (name === "person" || name === "cell phone" || name === "mobile phone" || (name.includes("phone") && !name.includes("headphone"))) {
-              const bb = d.boundingBox;
-              if (bb) {
-                // Mirror drawing context already applied
-                ctx.strokeStyle = "#3B82F6"; // blue-500
-                ctx.lineWidth = 3;
-                ctx.strokeRect(bb.originX, bb.originY, bb.width, bb.height);
-                // Label background
-                const label = `${name} ${Math.round((cat?.score || 0) * 100)}%`;
-                ctx.font = "16px ui-sans-serif, system-ui, -apple-system";
-                const padX = 8;
-                const textWidth = ctx.measureText(label).width;
-                const lx = Math.max(0, Math.min(bb.originX, c.width - (textWidth + padX * 2)));
-                const ly = Math.max(0, bb.originY - 24);
-                ctx.fillStyle = "#3B82F6";
-                const labelWidth = textWidth + padX * 2;
-                ctx.fillRect(lx, ly, labelWidth, 22);
-                // Draw label text in screen (unmirrored) space so it reads correctly
-                ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0); // reset to identity
-                ctx.fillStyle = "#FFFFFF";
-                ctx.font = "16px ui-sans-serif, system-ui, -apple-system";
-                const textX = c.width - (lx + labelWidth) + padX; // convert mirrored x to normal x
-                const textY = ly + 16;
-                ctx.fillText(label, textX, textY);
-                ctx.restore();
+            const score = typeof cat?.score === "number" ? cat!.score : 0;
+            const isPerson = name === "person";
+              const isPhone = name === "cell phone" || name === "mobile phone" || (name.includes("phone") && !name.includes("headphone"));
+              const phoneConfOk = isPhone && score >= 0.6; // require >= 60% confidence for phone
+              // Draw overlay only if overlays are not hidden and: person with >= 75% confidence, or phone with >= 60% confidence
+              if (!hideDetections && ((isPerson && score >= 0.75) || phoneConfOk)) {
+                const bb = d.boundingBox;
+                if (bb) {
+                  // Mirror drawing context already applied
+                  ctx.strokeStyle = "#3B82F6"; // blue-500
+                  ctx.lineWidth = 3;
+                  ctx.strokeRect(bb.originX, bb.originY, bb.width, bb.height);
+                  // Label background
+                  const label = `${name} ${Math.round((score || 0) * 100)}%`;
+                  ctx.font = "16px ui-sans-serif, system-ui, -apple-system";
+                  const padX = 8;
+                  const textWidth = ctx.measureText(label).width;
+                  const lx = Math.max(0, Math.min(bb.originX, c.width - (textWidth + padX * 2)));
+                  const ly = Math.max(0, bb.originY - 24);
+                  ctx.fillStyle = "#3B82F6";
+                  const labelWidth = textWidth + padX * 2;
+                  ctx.fillRect(lx, ly, labelWidth, 22);
+                  // Draw label text in screen (unmirrored) space so it reads correctly
+                  ctx.save();
+                  ctx.setTransform(1, 0, 0, 1, 0, 0); // reset to identity
+                  ctx.fillStyle = "#FFFFFF";
+                  ctx.font = "16px ui-sans-serif, system-ui, -apple-system";
+                  const textX = c.width - (lx + labelWidth) + padX; // convert mirrored x to normal x
+                  const textY = ly + 16;
+                  ctx.fillText(label, textX, textY);
+                  ctx.restore();
+                }
               }
-            }
-            if (name === "person") personCount += 1;
-            if (name === "cell phone" || name === "mobile phone" || (name.includes("phone") && !name.includes("headphone"))) phoneDetected = true;
+              if (isPerson && score >= 0.75) personCount += 1;
+              if (phoneConfOk) phoneDetected = true;
           }
           // Update environment state (avoid excessive re-renders)
           const prevEnv = envRef.current;
@@ -366,35 +363,72 @@ export default function LocalInterviewPage() {
     } catch (e) {
       console.warn("Camera init failed", e);
     }
-  }, [MP_BASE, FACE_MODEL, GESTURE_MODEL, OD_MODEL]);
+  }, [MP_BASE, FACE_MODEL, GESTURE_MODEL, OD_MODEL, hideDetections]);
 
-  // Alert AI automatically if phone or multiple people detected (with cooldown)
+  // Track start times for sustained detection windows whenever env changes
   useEffect(() => {
     const now = Date.now();
-    const cooldownMs = 20000; // 20s cooldown between alerts
-    if (!detectorOn) return;
+    if (!detectorOn) {
+      phoneDetectStartRef.current = null;
+      peopleDetectStartRef.current = null;
+      return;
+    }
     const hasPhone = env.phone;
     const extraPeople = env.personCount > 1;
-    const readyForAlert = now - lastEnvAlertRef.current > cooldownMs;
-    let message: string | null = null;
-    if (hasPhone && !alertedPhoneRef.current) {
-      message = "Observation: A cell phone is visible in the interview. Politely remind the candidate that using a phone during the interview is not allowed and ask them to put it away. Do not reintroduce yourself; keep it brief and direct.";
-      alertedPhoneRef.current = true;
+    if (hasPhone) {
+      if (!phoneDetectStartRef.current) phoneDetectStartRef.current = now;
+    } else {
+      phoneDetectStartRef.current = null;
+      alertedPhoneRef.current = false; // allow future alerts when it reappears
     }
-    if (extraPeople && !alertedPeopleRef.current) {
-      message = message
-        ? message + " Also, more than one person appears to be present; ask the candidate to continue the interview alone. Do not reintroduce yourself; keep it brief and direct."
-        : "Observation: More than one person appears in the frame. Politely remind the candidate that only the applicant should be present during the interview. Do not reintroduce yourself; keep it brief and direct.";
-      alertedPeopleRef.current = true;
+    if (extraPeople) {
+      if (!peopleDetectStartRef.current) peopleDetectStartRef.current = now;
+    } else {
+      peopleDetectStartRef.current = null;
+      alertedPeopleRef.current = false;
     }
-    if ((hasPhone || extraPeople) && readyForAlert && message) {
-      lastEnvAlertRef.current = now;
-  const fn = silentSendRef.current;
-      if (fn) fn(message);
+  }, [detectorOn, env.phone, env.personCount]);
+
+  // Periodically evaluate sustained detection and alert with cooldown
+  useEffect(() => {
+    const cooldownMs = 10000; // 10s cooldown between alerts
+    const tickMs = 250;
+    let timer: number | null = null;
+    const tick = () => {
+      if (!detectorOn) return;
+      const hasPhone = envRef.current.phone;
+      const extraPeople = envRef.current.personCount > 1;
+      const now = Date.now();
+      const phoneDuration = phoneDetectStartRef.current ? now - phoneDetectStartRef.current : 0;
+      const peopleDuration = peopleDetectStartRef.current ? now - peopleDetectStartRef.current : 0;
+      const sustainedPhone = hasPhone && phoneDuration >= 2000;
+      const sustainedPeople = extraPeople && peopleDuration >= 2000;
+      const readyForAlert = now - lastEnvAlertRef.current > cooldownMs;
+      let message: string | null = null;
+      if (sustainedPhone && !alertedPhoneRef.current) {
+        message = "Observation: A cell phone is visible in the interview. Politely remind the candidate that using a phone during the interview is not allowed and ask them to put it away. Do not reintroduce yourself; keep it brief and direct.";
+        alertedPhoneRef.current = true;
+      }
+      if (sustainedPeople && !alertedPeopleRef.current) {
+        message = message
+          ? message + " Also, more than one person appears to be present; ask the candidate to continue the interview alone. Do not reintroduce yourself; keep it brief and direct."
+          : "Observation: More than one person appears in the frame. Politely remind the candidate that only the applicant should be present during the interview. Do not reintroduce yourself; keep it brief and direct.";
+        alertedPeopleRef.current = true;
+      }
+      if ((sustainedPhone || sustainedPeople) && readyForAlert && message) {
+        lastEnvAlertRef.current = now;
+        const fn = silentSendRef.current;
+        if (fn) fn(message);
+      }
+    };
+    // Start interval if detection is on
+    if (detectorOn) {
+      timer = window.setInterval(tick, tickMs);
     }
-    if (!hasPhone) alertedPhoneRef.current = false; // reset so we can alert again later if it reappears (after cooldown)
-    if (!extraPeople) alertedPeopleRef.current = false;
-  }, [detectorOn, env.personCount, env.phone]);
+    return () => {
+      if (timer) window.clearInterval(timer);
+    };
+  }, [detectorOn]);
 
   useEffect(() => {
     const vid = videoRef.current;
@@ -414,13 +448,23 @@ export default function LocalInterviewPage() {
       const synth = synthRef.current; if (!synth) return false;
       try {
         if (synth.speaking) synth.cancel();
+        // Pause STT while speaking
+        sttSuspendedRef.current = true;
+        if (recRef.current && sttOn) { try { recRef.current.stop(); } catch {} setSttOn(false); }
         const u = new SpeechSynthesisUtterance(trimmed);
         const v = voices.find(vv => vv.voiceURI === voiceURI) || null;
         if (v) u.voice = v;
         u.rate = Math.min(2, Math.max(0.5, rate || 1));
         u.pitch = 1;
-        u.onend = () => setSpeaking(false);
-        setSpeaking(true);
+        u.onstart = () => setSpeaking(true);
+        u.onend = () => {
+          setSpeaking(false);
+          // Resume STT after TTS ends if not muted
+          sttSuspendedRef.current = false;
+          if (autoSttEnabled && !muted && recRef.current && !speaking) {
+            try { recRef.current.start(); setSttOn(true); } catch {}
+          }
+        };
         synth.speak(u);
         return true;
       } catch {
@@ -430,6 +474,9 @@ export default function LocalInterviewPage() {
 
     if (useOnlineTTS) {
       try {
+        // Pause STT while fetching / playing online TTS
+        sttSuspendedRef.current = true;
+        if (recRef.current && sttOn) { try { recRef.current.stop(); } catch {} setSttOn(false); }
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -440,11 +487,20 @@ export default function LocalInterviewPage() {
           const url = URL.createObjectURL(blob);
           if (!audioRef.current) audioRef.current = new Audio();
           audioRef.current.src = url;
-          setSpeaking(true);
+          // Speed up online TTS playback (default ~1.2x, configurable)
+          const envRate = Number(process.env.NEXT_PUBLIC_TTS_ONLINE_RATE ?? "");
+          const desired = Number.isFinite(envRate) && envRate > 0 ? envRate : 1.2;
+          audioRef.current.playbackRate = Math.min(2, Math.max(0.5, desired));
+          audioRef.current.onplay = () => setSpeaking(true);
           await audioRef.current.play().catch(() => {});
           audioRef.current.onended = () => {
             setSpeaking(false);
             URL.revokeObjectURL(url);
+            // Resume STT after audio ends
+            sttSuspendedRef.current = false;
+            if (autoSttEnabled && !muted && recRef.current && !speaking) {
+              try { recRef.current.start(); setSttOn(true); } catch {}
+            }
           };
           return;
         } else if (res.status === 400) {
@@ -458,9 +514,23 @@ export default function LocalInterviewPage() {
     }
     // Fallback
     playBrowserTTS();
-  }, [rate, useOnlineTTS, voiceURI, voices]);
+  }, [rate, useOnlineTTS, voiceURI, voices, autoSttEnabled, muted, speaking, sttOn]);
+  // Ensure STT starts initially (after mount) if available
+  useEffect(() => {
+    if (!recRef.current || !sttAvailable) return;
+    if (autoSttEnabled && !muted && !speaking && !sttOn && !sttSuspendedRef.current) {
+      try { recRef.current.start(); /* onstart sets sttOn */ } catch {}
+    }
+  }, [autoSttEnabled, muted, speaking, sttAvailable, sttOn]);
 
-  const pushUser = (text: string) => setMessages(m => [...m, { id: uid(), role: "user", content: text, ts: Date.now() }]);
+  // Whenever speaking flag changes from true->false, attempt restart (extra safety)
+  useEffect(() => {
+    if (!speaking && autoSttEnabled && !muted && recRef.current && !sttOn && !sttSuspendedRef.current) {
+      try { recRef.current.start(); /* onstart sets sttOn */ } catch {}
+    }
+  }, [speaking, autoSttEnabled, muted, sttOn]);
+
+  // pushUser is no longer needed because sendToModel adds the user message
 
   const sendToModel = useCallback(async (userText: string, syntheticUser = false) => {
     if (!userText.trim() || busy) return; setError(null);
@@ -505,74 +575,157 @@ export default function LocalInterviewPage() {
   }, [sendToModel]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 text-slate-900">
-      <div className="mx-auto max-w-screen-2xl px-8 py-8">
+    <div className="h-screen overflow-hidden bg-gradient-to-br from-white via-slate-50 to-slate-100 text-slate-900">
+      <div className="mx-auto max-w-screen-2xl h-full flex flex-col px-6 md:px-10 py-4 relative">
+        {/* Decorative background */}
+        <div className="absolute inset-0 pointer-events-none [background:radial-gradient(circle_at_30%_20%,rgba(59,130,246,0.12),transparent_60%)]" />
         {/* Header */}
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Local Interview</h1>
-            <p className="mt-1 text-sm text-slate-600">Model: llama3.2 (local) • {job ? `Job: ${job.title}` : "No job selected"}</p>
+        <div className="flex items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="relative h-12 w-12 drop-shadow-sm flex items-center justify-center rounded-md border bg-white overflow-hidden">
+              <Image src="/images/ihub-logo.png" alt="iHub Logo" width={48} height={48} unoptimized className="object-contain w-12 h-12" />
+            </div>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-semibold tracking-tight flex items-center gap-2">
+                <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">AI Interview</span>
+                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">Beta</span>
+              </h1>
+              <p className="mt-1 text-xs md:text-sm text-slate-600 flex items-center gap-2">
+                <span className="inline-flex items-center gap-1">Model: <span className="font-medium text-slate-800">llama3.2 (local)</span></span>
+                <span className="hidden sm:inline h-1 w-1 rounded-full bg-slate-300" />
+                <span className="inline-flex items-center gap-1">Quality: <span className="text-green-700">Stable</span></span>
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={()=>router.push("/dashboard")} className="rounded-md border bg-white px-3 py-1.5 text-sm hover:bg-slate-50">Back</button>
+          <div className="flex items-center gap-3">
+            {job && (
+              <div className="hidden md:flex flex-col items-end text-right">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Role</div>
+                <div className="text-sm font-medium text-slate-800 line-clamp-1">{job.title}</div>
+              </div>
+            )}
+            <button onClick={()=>router.push("/dashboard")} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white/80 backdrop-blur px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Back
+            </button>
           </div>
         </div>
 
         {job && (
-          <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Context: {job.title} • {job.company} • Skills: {job.skills.slice(0,5).join(", ")}
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 backdrop-blur px-4 py-3 text-xs md:text-[13px] text-slate-700 flex flex-wrap items-center gap-3 shadow-sm">
+            <span className="inline-flex items-center gap-1 font-medium text-slate-900">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a4 4 0 0 0-8 0v2"/></svg>
+              {job.company}
+            </span>
+            <span className="inline-flex items-center gap-1 text-blue-700 font-medium">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              {job.location}
+            </span>
+            <span className="inline-flex items-center gap-1 text-slate-600">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              {job.category}
+            </span>
+            <span className="flex items-center gap-1 text-slate-500">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="10" x2="21" y2="10"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg>
+              Posted {new Date(job.datePosted).toLocaleDateString()}
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {job.skills.slice(0,5).map(s => (
+                <span key={s} className="inline-flex items-center rounded-full bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 text-[10px] font-medium">
+                  {s}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="mt-6 grid grid-cols-12 gap-6 min-h-[76vh] items-start">
+        <div className="mt-4 grid grid-cols-12 gap-4 h-full items-stretch min-h-0">
           {/* Camera panel */}
           <div className={showTranscript ? "col-span-12 lg:col-span-5" : "col-span-12"}>
-            <div className="rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-3 shadow-sm">
+            <div className="h-full rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm flex flex-col">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <div className="text-sm font-medium text-slate-700">Camera</div>
-                  <span className={`hidden sm:inline rounded-full px-2 py-1 text-[10px] font-medium shadow ${gestureAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>Gesture: {gestureAvailable ? 'On' : 'Off'}</span>
-                  <span className={`hidden sm:inline rounded-full px-2 py-1 text-[10px] font-medium shadow ${detectorAvailable ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'}`}>Detector: {detectorAvailable ? (detectorOn ? 'On' : 'Off') : 'N/A'}</span>
+                  <div className="text-sm font-medium text-slate-700 flex items-center gap-1">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="14" rx="2" ry="2"/><circle cx="12" cy="11" r="3"/></svg>
+                    <span>Camera</span>
+                  </div>
+                  <span className={`hidden sm:inline rounded-full px-2 py-1 text-[10px] font-medium shadow ${detectorAvailable ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}`}>Detector: {detectorAvailable ? (detectorOn ? 'On' : 'Off') : 'N/A'}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {detectorAvailable && (
-                    <button onClick={()=>setDetectorOn(v=>!v)} className="text-xs rounded-md border px-2 py-1 bg-white hover:bg-slate-50">
-                      {detectorOn ? 'Disable Detection' : 'Enable Detection'}
-                    </button>
-                  )}
-                  {/* Online TTS toggle */}
-                  <label className="hidden md:flex items-center gap-1 text-xs text-slate-600" title="Use online TTS (if configured)">
-                    <input
-                      type="checkbox"
-                      checked={useOnlineTTS}
-                      onChange={(e)=>setUseOnlineTTS(e.target.checked)}
-                    />
-                    <span>Online TTS</span>
-                  </label>
-                  {/* TTS voice selector (to reduce robotic sound) */}
-                  <select
-                    value={voiceURI ?? ''}
-                    onChange={(e)=>setVoiceURI(e.target.value || null)}
-                    className="hidden md:block text-xs rounded-md border px-2 py-1 bg-white"
-                    title="Choose TTS Voice"
-                  >
-                    {displayVoices.length === 0 ? <option value="">Default voice</option> : null}
-                    {displayVoices.map(v => (
-                      <option key={v.voiceURI} value={v.voiceURI}>{v.label}</option>
-                    ))}
-                  </select>
+                  {/* Detection toggle moved to bottom controls */}
+                  {/* Voice/language selection removed by request */}
                   {/* Rate slider removed as requested */}
-                  <button onClick={()=>setShowTranscript(v=>!v)} className="text-xs rounded-md border px-2 py-1 bg-white hover:bg-slate-50">
-                    {showTranscript ? "Expand Camera" : "Show Transcript"}
+                  <button onClick={()=>setShowTranscript(v=>!v)} className="text-xs inline-flex items-center gap-1 rounded-full border border-slate-300 bg-white/80 px-3 py-1.5 font-medium shadow-sm hover:bg-white transition">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a4 4 0 0 1-4 4H9l-4 3v-3H5a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v8z"/>
+                      <circle cx="9" cy="11" r="1"/>
+                      <circle cx="12" cy="11" r="1"/>
+                      <circle cx="15" cy="11" r="1"/>
+                    </svg>
+                    {showTranscript ? "Hide Transcript" : "Show Transcript"}
                   </button>
                 </div>
               </div>
-                  <div className={`relative ${showTranscript ? "aspect-[4/3]" : "aspect-video"} w-full overflow-hidden rounded-lg bg-black mt-2 ring-1 ring-black/5`}>
+                  <div className="relative flex-1 min-h-0 w-full overflow-hidden rounded-xl bg-black/95 mt-3 ring-1 ring-black/10 shadow-inner">
                 {/* Mirror the video so it behaves like a front-facing camera */}
                 <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover -scale-x-100" muted playsInline />
                 {/* Keep canvas unmirrored; we mirror the drawing context for shapes but draw text normally */}
                 <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
                 {/* Removed thumbs up badge per request */}
+                <div className="absolute top-2 left-2 z-10 inline-flex items-center gap-1 rounded-md bg-black/50 backdrop-blur px-2 py-1 text-[10px] font-medium text-slate-200">Live Preview</div>
+                {/* Bottom controls: mute and overlay toggle */}
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2">
+                  {sttAvailable && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMuted(m => !m);
+                        if (!muted) { // about to mute
+                          if (recRef.current && sttOn) { try { recRef.current.stop(); } catch {} }
+                          setSttOn(false);
+                        } else { // unmute
+                          if (recRef.current && autoSttEnabled && !speaking) { try { recRef.current.start(); setSttOn(true); } catch {} }
+                        }
+                      }}
+                      className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-medium shadow ring-1 ring-black/20 transition ${muted ? 'bg-rose-600 text-white' : 'bg-black/60 text-white backdrop-blur hover:bg-black/70'}`}
+                      aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+                    >
+                      {muted ? (
+                        <>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9v6a3 3 0 0 0 5.12 2.12"/><path d="M9 9V5a3 3 0 0 1 5.83-.83"/><path d="M17 7v4"/><path d="M21 5v4"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+                          Muted
+                        </>
+                      ) : (
+                        <>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9v6a3 3 0 0 0 6 0V9"/><path d="M9 9V5a3 3 0 0 1 6 0v4"/><path d="M17 7v4"/><path d="M21 5v4"/></svg>
+                          {speaking ? 'AI Speaking' : (sttOn ? 'Listening' : 'Idle')}
+                        </>
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setHideDetections(v => !v)}
+                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-medium shadow ring-1 ring-black/20 transition ${hideDetections ? 'bg-black/60 text-white hover:bg-black/70' : 'bg-white/80 text-slate-900 hover:bg-white'}`}
+                    title={hideDetections ? 'Detection overlays hidden' : 'Detection overlays visible'}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    {hideDetections ? 'Overlay: Off' : 'Overlay: On'}
+                  </button>
+                  {detectorAvailable && (
+                    <button
+                      type="button"
+                      onClick={() => setDetectorOn(v => !v)}
+                      className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-medium shadow ring-1 ring-black/20 transition ${detectorOn ? 'bg-white/80 text-slate-900 hover:bg-white' : 'bg-rose-600 text-white'}`}
+                      title={detectorOn ? 'Disable detection' : 'Enable detection'}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8"/></svg>
+                      {detectorOn ? 'Detection: On' : 'Detection: Off'}
+                    </button>
+                  )}
+                </div>
               </div>
               {/* Removed cues and tip lines as requested */}
             </div>
@@ -580,19 +733,27 @@ export default function LocalInterviewPage() {
 
           {/* Conversation / Transcript panel */}
           <div className={showTranscript ? "col-span-12 lg:col-span-7" : "hidden"}>
-            <div className="rounded-2xl border border-slate-200 bg-white/70 backdrop-blur p-3 shadow-sm h-full min-h-[50vh] flex flex-col">
+            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur p-4 shadow-sm h-full flex flex-col min-h-0">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium text-slate-700">Transcript</div>
+                <div className="text-sm font-medium text-slate-700 flex items-center gap-1">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a4 4 0 0 1-4 4H9l-4 3v-3H5a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v8z"/>
+                    <circle cx="9" cy="11" r="1"/>
+                    <circle cx="12" cy="11" r="1"/>
+                    <circle cx="15" cy="11" r="1"/>
+                  </svg>
+                  Transcript
+                </div>
                 <div className="text-[11px] text-slate-500">{busy ? "AI is responding…" : "Ready"}</div>
               </div>
-              <div className="mt-2 flex-1 overflow-y-auto rounded-md border p-2 bg-white/80">
+              <div className="mt-2 flex-1 min-h-0 overflow-y-auto rounded-md border p-2 bg-white/80">
                 {messages.length === 0 ? (
                   <div className="h-full grid place-items-center text-slate-500 text-sm">Starting interview…</div>
                 ) : (
                   <div className="flex flex-col gap-2">
                     {messages.map(m => (
                       <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-900"}`}>
+                        <div className={`max-w-[78%] rounded-xl px-3 py-2 text-sm shadow-sm ${m.role === "user" ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white" : "bg-slate-100 text-slate-900"}`}>
                           {m.content}
                         </div>
                       </div>
@@ -602,25 +763,12 @@ export default function LocalInterviewPage() {
                 )}
               </div>
               {/* Composer */}
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  value={input}
-                  onChange={e=>setInput(e.target.value)}
-                  onKeyDown={e=>{ if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); const t=input.trim(); if(t){ pushUser(t); setInput(""); void sendToModel(t); } } }}
-                  placeholder="Type your answer…"
-                  className="flex-1 rounded-md border px-3 py-2 text-sm"
-                />
-                <button
-                  onClick={()=>{ const t=input.trim(); if(!t) return; pushUser(t); setInput(""); void sendToModel(t); }}
-                  disabled={busy}
-                  className="rounded-md bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-50"
-                >Send</button>
-                <button
-                  onClick={()=>{ const rec = recRef.current; if(!rec) return; if (speaking && synthRef.current) synthRef.current.cancel(); try { setSttOn(true); rec.start(); } catch { setSttOn(false); } }}
-                  disabled={!sttAvailable || sttOn || busy}
-                  className="rounded-md border px-3 py-2 text-sm bg-white disabled:opacity-50"
-                  title={sttAvailable ? "Speak your answer" : "Browser STT not available"}
-                >{sttOn?"Listening…":"🎙️ Speak"}</button>
+              <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-500">
+                <div className="inline-flex items-center gap-1">
+                  <span className={`h-2 w-2 rounded-full ${sttOn && !muted ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                  {muted ? 'Microphone muted' : (speaking ? 'AI speaking…' : (sttOn ? 'Listening (auto transcription)' : 'Idle'))}
+                </div>
+                <div>Speech is auto-sent when you finish speaking.</div>
               </div>
             </div>
           </div>

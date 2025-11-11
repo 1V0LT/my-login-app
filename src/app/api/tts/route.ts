@@ -1,97 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
+import googleTTS from "google-tts-api";
 
-// Optional: keep this route on the Node runtime to allow streaming/proxying
 export const runtime = "nodejs";
 
 export async function GET() {
-  const configured = Boolean(process.env.ELEVENLABS_API_KEY);
-  return NextResponse.json({ configured });
+  return NextResponse.json({ configured: true, provider: "google-tts" });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { text, voiceId } = (await req.json().catch(() => ({}))) as {
-      text?: string;
-      voiceId?: string;
-    };
-    if (!text || !text.trim()) {
+    const body = (await req.json().catch(() => ({}))) as { text?: string; lang?: string };
+    const text = (body?.text ?? "").toString();
+    const lang = typeof body?.lang === "string" ? body.lang : "en";
+    if (!text.trim()) {
       return NextResponse.json({ error: "Missing text" }, { status: 400 });
     }
 
-    const apiKey = process.env.ELEVENLABS_API_KEY;
-    const defaultVoice = process.env.ELEVENLABS_VOICE_ID; // set this in env
-    const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
-
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            "Online TTS not configured. Set ELEVENLABS_API_KEY env var.",
-        },
-        { status: 400 }
-      );
-    }
-
-    let chosenVoice = voiceId || defaultVoice;
-    if (!chosenVoice) {
-      // Try to fetch voices and pick a sensible default (prefer Rachel)
-      const voicesResp = await fetch("https://api.elevenlabs.io/v1/voices", {
-        method: "GET",
-        headers: { "xi-api-key": apiKey, Accept: "application/json" },
-      });
-      if (voicesResp.ok) {
-        const data = (await voicesResp.json().catch(() => ({}))) as { voices?: Array<{ voice_id: string; name?: string }> };
-        const list = Array.isArray(data.voices) ? data.voices : [];
-        const rachel = list.find(v => /rachel/i.test(v.name || ""));
-        chosenVoice = (rachel || list[0])?.voice_id;
-      }
-      if (!chosenVoice) {
-        return NextResponse.json(
-          {
-            error:
-              "No ElevenLabs voice available. Set ELEVENLABS_VOICE_ID or ensure your account has at least one voice.",
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    // ElevenLabs Streaming TTS endpoint
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
-      chosenVoice
-    )}/stream?optimize_streaming_latency=2`;
-
-    // Note: ElevenLabs does not support a direct numeric speed control; keep voice_settings simple
-    const body = {
-      text: text.toString(),
-      model_id: modelId,
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        // style and use_speaker_boost can be adjusted via env in the future
-      },
-    } as Record<string, unknown>;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        Accept: "audio/mpeg",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
+    // Build list of audio URLs for the text
+    const parts = googleTTS.getAllAudioUrls(text, {
+      lang: lang.slice(0, 5),
+      slow: false,
+      host: "https://translate.google.com",
     });
 
-    if (!resp.ok || !resp.body) {
-      const errText = await resp.text().catch(() => "");
-      return NextResponse.json(
-        { error: `TTS provider error (${resp.status}): ${errText || "unknown"}` },
-        { status: 500 }
-      );
-    }
+    // Stream concatenated audio/mpeg back to the client
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for (const p of parts) {
+            const r = await fetch(p.url);
+            if (!r.ok || !r.body) continue;
+            const reader = r.body.getReader();
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (value) controller.enqueue(value);
+            }
+          }
+        } catch {
+          // ignore errors
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    // Proxy the audio/mpeg stream back to the client
-    return new NextResponse(resp.body as ReadableStream<Uint8Array>, {
+    return new NextResponse(stream, {
       headers: {
         "Content-Type": "audio/mpeg",
         "Cache-Control": "no-cache",

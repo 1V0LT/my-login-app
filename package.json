@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "google-tts-api": "^2.0.2",
     "framer-motion": "^12.4.10",
     "next": "^15.5.2",
     "react": "^19.0.0",
